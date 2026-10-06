@@ -353,7 +353,8 @@ const sfx = {
 let voice = null;
 function pickVoice(){ try { const vs = speechSynthesis.getVoices(); voice = vs.find(v => /en-US/i.test(v.lang) && /Google|Samantha|Aria|Jenny/i.test(v.name)) || vs.find(v => /^en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; } catch {} }
 try { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } catch {}
-function say(text){ try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (voice) u.voice = voice; u.rate = S.settings.rate; speechSynthesis.speak(u); } catch {} }
+const BR = window.AndroidBridge || null; // 안드로이드 앱 안에서 실행될 때 폰의 말하기·듣기 기능을 써요
+function say(text){ if (BR) { try { BR.speak(text, S.settings.rate); } catch {} return; } try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "en-US"; if (voice) u.voice = voice; u.rate = S.settings.rate; speechSynthesis.speak(u); } catch {} }
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ───── 화면 이동 (폰의 뒤로가기도 지원) ───── */
@@ -518,7 +519,7 @@ function renderQ(){
   $("#ansLabel").textContent = k2e ? "영어로 답하기" : "한글로 답하기";
   $("#inputArea").hidden = false; $("#fbArea").hidden = true; Q.answered = false;
   $("#micLbl").textContent = "녹음 (말하기)";
-  if (!SR) { $("#micBtn").hidden = true; $("#micNote").hidden = false; $("#micNote").textContent = "이 브라우저는 말하기 인식을 지원하지 않아요. 크롬에서 열면 쓸 수 있어요."; }
+  if (!SR && !BR) { $("#micBtn").hidden = true; $("#micNote").hidden = false; $("#micNote").textContent = "이 브라우저는 말하기 인식을 지원하지 않아요. 크롬에서 열면 쓸 수 있어요."; }
   if (!k2e && S.settings.autoSpeak) setTimeout(() => say(q.e[0]), 250);
 }
 $("#qSpeak").onclick = () => say(Q.list[Q.i].e[0]);
@@ -526,8 +527,19 @@ $("#kbBtn").onclick = () => { stopRec(); $("#ans").focus(); };
 $("#ans").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!Q.answered) check(false); } });
 
 let rec = null, recBase = "";
-function stopRec(){ if (rec) { try { rec.stop(); } catch {} } }
+function stopRec(){ if (BR) { if (brOn) try { BR.stopListening(); } catch {} return; } if (rec) { try { rec.stop(); } catch {} } }
+let brOn = false;
+const micOff = () => { $("#micBtn").classList.remove("on"); $("#micLbl").textContent = "녹음 (말하기)"; };
+const micErr = c => { if (c === "not-allowed" || c === "service-not-allowed") toast("마이크 사용을 허용해 주세요."); else if (c === "no-speech") toast("소리가 들리지 않았어요. 다시 말해 보세요."); else if (c === "network") toast("말하기 인식은 인터넷이 연결돼 있어야 해요."); else if (c === "unavailable") toast("이 폰에서는 말하기 인식을 쓸 수 없어요."); };
+window.__onSpeech = m => { if (m.type === "partial" || m.type === "final") $("#ans").value = recBase + m.text; else if (m.type === "error") micErr(m.text); else if (m.type === "end") { brOn = false; micOff(); } };
 $("#micBtn").onclick = () => {
+  if (BR) {
+    if (brOn) { try { BR.stopListening(); } catch {} return; }
+    recBase = $("#ans").value.trim(); recBase = recBase ? recBase + " " : "";
+    brOn = true; $("#micBtn").classList.add("on"); $("#micLbl").textContent = "듣고 있어요… (누르면 멈춤)";
+    try { BR.startListening(Q.dir === "k2e" ? "en-US" : "ko-KR"); } catch { brOn = false; micOff(); }
+    return;
+  }
   if (!SR) return;
   if (rec) { stopRec(); return; }
   try { speechSynthesis.cancel(); } catch {}
@@ -651,7 +663,7 @@ function renderSettings(){
 
 /* ───── 시작 ───── */
 applySkin(); renderHome();
-if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+if (!BR && "serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 try { navigator.storage?.persist?.(); } catch {}
 window.__ym = { normEn, normKo, grade, ALL };
 })();
